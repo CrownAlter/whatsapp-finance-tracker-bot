@@ -7,11 +7,35 @@ from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 
 class FinanceEngine:
+    """
+    Core financial calculations and transaction management engine.
+    
+    Handles transaction processing, report generation, and financial
+    analytics including period-based summaries and category breakdowns.
+    """
+    
+    # Default limits and periods
+    DEFAULT_TRANSACTION_LIMIT = 10  # Number of transactions to return by default
+    DAILY_PERIOD_DAYS = 1
+    WEEKLY_PERIOD_DAYS = 7
+    MONTHLY_PERIOD_DAYS = 30
+    
     def process_transaction(self, db: Session, user_phone: str, data: dict):
         """
-        Creates a transaction record.
+        Create and store a new transaction record.
+        
+        Args:
+            db: Database session
+            user_phone: User's WhatsApp phone number
+            data: Transaction data (amount, category, type, description, date)
+            
+        Returns:
+            Created Transaction object
+            
+        Raises:
+            ValueError: If required transaction data is missing
         """
-        # Ensure user exists (simple check, or create if not exists)
+        # Ensure user exists (create if not exists)
         user = db.query(User).filter(User.phone_number == user_phone).first()
         if not user:
             user = User(phone_number=user_phone)

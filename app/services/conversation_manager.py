@@ -9,19 +9,40 @@ from datetime import datetime
 import json
 
 class ConversationManager:
+    """
+    Manages multi-turn conversations with users for financial tracking.
+    
+    Handles state transitions, context preservation, and guides users
+    through complex operations like categorization or error recovery.
+    
+    States:
+        IDLE: Ready for new commands
+        AWAITING_CATEGORY: Waiting for user to provide transaction category
+        AWAITING_AMOUNT: Waiting for transaction amount
+        AWAITING_CONFIRMATION: Waiting for user confirmation
+    """
+    
     def get_session(self, db: DbSession, user_phone: str) -> Session:
         """
         Get or create a conversation session for the user.
+        
+        Args:
+            db: Database session
+            user_phone: User's WhatsApp phone number
+            
+        Returns:
+            Session object for conversation state management
         """
         session = db.query(Session).filter(Session.user_phone == user_phone).first()
         if not session:
-            # Ensure user exists first
+            # Create user if doesn't exist
             user = db.query(User).filter(User.phone_number == user_phone).first()
             if not user:
                 user = User(phone_number=user_phone)
                 db.add(user)
                 db.commit()
             
+            # Create new conversation session
             session = Session(user_phone=user_phone)
             db.add(session)
             db.commit()
@@ -48,114 +69,160 @@ class ConversationManager:
         # 1. Global Commands (cancel, help) break out of any state
         if message.lower() in ["cancel", "stop", "abort"]:
             self.update_state(db, session, ConversationState.IDLE, {})
-            return "❌ Operation cancelled."
-            
+            return "❌ Cancelled. What can I help you with?"
+        
         if intent == "help":
-            return self.handle_help(db, session)
-
-        # 2. State Machine Logic
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return get_error_message("help")
         
-        if state == ConversationState.IDLE:
-            return self.handle_idle_state(db, session, intent, data)
-            
-        elif state == ConversationState.AWAITING_CATEGORY:
+        # 2. State-specific handling
+        if state == ConversationState.AWAITING_CATEGORY:
             return self.handle_awaiting_category(db, session, message)
-            
-        # Add more states as needed (AWAITING_AMOUNT, etc.)
         
-        # Fallback reset
-        self.update_state(db, session, ConversationState.IDLE, {})
-        return "⚠️ Something went wrong. Conversation reset."
-
-    def handle_idle_state(self, db: DbSession, session: Session, intent: str, data: dict) -> str:
-        """
-        Handle messages when in IDLE state.
-        """
+        if state == ConversationState.AWAITING_AMOUNT:
+            return self.handle_awaiting_amount(db, session, message)
+        
+        if state == ConversationState.AWAITING_CONFIRMATION:
+            return self.handle_awaiting_confirmation(db, session, message)
+            
+        # 3. Intent-based handling when IDLE
         if intent == "log_transaction":
-            # Check for missing category
-            if data['category'] == "uncategorized":
-                # Ask for category
+            # Validate transaction data
+            if not data.get("amount"):
+                self.update_state(db, session, ConversationState.AWAITING_AMOUNT, {"type": data.get("type", "expense")})
+                return "❓ How much was the transaction?"
+                
+            if not data.get("category"):
                 self.update_state(db, session, ConversationState.AWAITING_CATEGORY, data)
-                return get_error_message("missing_category")
+                return "❓ What category is this for? Examples: food, transport, rent, bills"
             
-            # If complete, process it
-            try:
-                # Convert date string if it was serialized in context, but here 'data' is fresh dict
-                # data['date'] is datetime or None.
-                
-                transaction = finance_engine.process_transaction(db, session.user_phone, data)
-                
-                date_str = transaction.transaction_date.strftime("%b %d")
-                return f"✅ Recorded: {transaction.type.value} of {transaction.amount} for {transaction.category} ({date_str})."
-            except Exception as e:
-                return f"❌ Error: {str(e)}"
-                
-        elif intent == "get_report":
+            # All data present, create transaction
+            return self.create_transaction_with_context(db, user_phone, data)
+        
+        # 4. Other intents (reports, history) are handled directly
+        if intent == "get_report":
             period = data.get("period", "all")
-            return finance_engine.generate_report(db, session.user_phone, period)
+            report = finance_engine.generate_report(db, user_phone, period)
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return report
+        
+        if intent == "get_history":
+            history = finance_engine.get_transaction_history(db, user_phone)
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return history
             
-        elif intent == "get_history":
-            return finance_engine.get_transaction_history(db, session.user_phone)
+        if intent == "delete_transaction":
+            target = data.get("target", "last")
+            success = finance_engine.delete_transaction(db, user_phone, target)
+            self.update_state(db, session, ConversationState.IDLE, {})
+            if success:
+                return "✅ Transaction deleted."
+            return "❌ Could not delete transaction."
             
-        elif intent == "delete_transaction":
-            # For now only support deleting last
-            return finance_engine.delete_last_transaction(db, session.user_phone)
-            
-        elif intent == "unknown":
-             return get_error_message("unknown_command")
-             
-        elif intent == "list_categories":
-             from app.core.help_messages import CATEGORY_LIST_MESSAGE
-             return CATEGORY_LIST_MESSAGE
-             
+        if intent == "list_categories":
+            from app.core.categories import get_categories_for_type
+            cats = get_categories_for_type("expense") # Could make this dynamic
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return f"📝 Available categories: {', '.join(cats)}"
+              
         return get_error_message("unknown_command")
 
     def handle_awaiting_category(self, db: DbSession, session: Session, message: str) -> str:
         """
-        Handle input when waiting for a category.
+        Process user input when waiting for transaction category.
+        
+        Validates the provided category, handles suggestions for similar categories,
+        and either completes the transaction or prompts for better input.
+        
+        Args:
+            db: Database session
+            session: User's conversation session with pending transaction data
+            message: User's category input
+            
+        Returns:
+            Response message confirming transaction or requesting clarification
         """
         context_data = session.context
         candidate = message.strip().split()[0]
         
-        # Validate category
+        # Validate against known categories for transaction type
         is_valid, normalized = validate_category(candidate, context_data.get("type", "expense"))
         
         if is_valid:
-            # Update data with valid category
+            # Complete pending transaction with valid category
             context_data['category'] = normalized
             
             try:
-                # Reconstruct transaction data
-                # Need to handle date serialization if it was stored in context (JSON)
-                # JSON serializes datetime as string usually.
-                # In this MVP, we might lose the date object if not careful.
-                # Let's simple parse it back or default to now.
-                
-                if 'date' in context_data and context_data['date']:
-                    # Assuming it might be stored as ISO string or similar if we used proper encoder
-                    # For simplicity, if we lose complex objects in JSON context, we might need a better serializer.
-                    # Here we'll ignore complex date recovery for this specific flow correction.
-                    context_data['date'] = None 
-                
+                # Note: JSON serialization may lose datetime objects
+                # For production, use proper JSON encoder or separate storage
                 transaction = finance_engine.process_transaction(db, session.user_phone, context_data)
-                
-                # Reset state
                 self.update_state(db, session, ConversationState.IDLE, {})
                 return f"✅ Recorded: {transaction.type.value} of {transaction.amount} for {transaction.category}."
-                
             except Exception as e:
                 self.update_state(db, session, ConversationState.IDLE, {})
                 return f"❌ Error saving transaction: {str(e)}"
         else:
-            # Suggest or retry
+            # Try to suggest similar categories based on fuzzy matching
             suggested = suggest_category(candidate, context_data.get("type", "expense"))
             if suggested:
                 return get_error_message("invalid_category", suggestion=suggested)
-            
             return "❓ Valid category required. Try 'food', 'transport', 'bills' etc."
 
-    def handle_help(self, db: DbSession, session: Session) -> str:
-        from app.core.help_messages import HELP_MESSAGE
-        return HELP_MESSAGE
+    def handle_awaiting_amount(self, db: DbSession, session: Session, message: str) -> str:
+        """Handle input when waiting for an amount."""
+        # Simple amount extraction - should be enhanced
+        try:
+            # Look for numbers in the message
+            import re
+            amount_match = re.search(r'(\d+(\.\d+)?)', message)
+            if not amount_match:
+                return "❌ I couldn't find a valid amount. Please enter just a number like '100' or '99.50'"
+            
+            amount = float(amount_match.group(1))
+            context_data = session.context
+            context_data['amount'] = amount
+            
+            # Now check if we have category
+            if not context_data.get("category"):
+                self.update_state(db, session, ConversationState.AWAITING_CATEGORY, context_data)
+                return "❓ What category is this for?"
+            
+            # Complete the transaction
+            return self.create_transaction_with_context(db, session.user_phone, context_data)
+            
+        except ValueError:
+            return "❌ Invalid amount format. Please enter just a number like '100' or '99.50'"
+
+    def handle_awaiting_confirmation(self, db: DbSession, session: Session, message: str) -> str:
+        """Handle confirmation responses."""
+        response = message.lower().strip()
+        
+        if response in ["yes", "y", "confirm", "ok", "save"]:
+            # Confirm and create transaction
+            context_data = session.context
+            return self.create_transaction_with_context(db, session.user_phone, context_data)
+        
+        elif response in ["no", "n", "cancel", "discard"]:
+            # Cancel the pending transaction
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return "❌ Transaction cancelled."
+        
+        else:
+            # Ask for clear confirmation
+            return "❓ Please confirm with 'yes' or cancel with 'no'"
+
+    def create_transaction_with_context(self, db: DbSession, user_phone: str, data: dict) -> str:
+        """Helper to create transaction and reset conversation state."""
+        try:
+            transaction = finance_engine.process_transaction(db, user_phone, data)
+            # Reset state after successful creation
+            session = self.get_session(db, user_phone)
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return f"✅ Recorded: {transaction.type.value} of {transaction.amount} for {transaction.category}."
+        except Exception as e:
+            # Reset state on error
+            session = self.get_session(db, user_phone)
+            self.update_state(db, session, ConversationState.IDLE, {})
+            return f"❌ Error: {str(e)}"
 
 conversation_manager = ConversationManager()

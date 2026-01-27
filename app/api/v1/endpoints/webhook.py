@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, Depends, HTTPException, Form
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.services.message_processor import message_processor
@@ -33,13 +34,12 @@ async def whatsapp_webhook(
     resp = MessagingResponse()
     resp.message(response_text)
     
-    # Return XML response
-    return Dataresponse(content=str(resp), media_type="application/xml")
-
-from fastapi.responses import Response
+# Return XML response
+    return data_response(content=str(resp), media_type="application/xml")
 
 # Helper to return XML
-def Dataresponse(content: str, media_type: str = "application/xml"):
+def data_response(content: str, media_type: str = "application/xml"):
+    """Return XML response for Twilio webhook."""
     return Response(content=content, media_type=media_type)
 
 @router.post("/verify/message")

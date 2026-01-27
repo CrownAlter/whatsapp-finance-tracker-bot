@@ -6,18 +6,29 @@ from app.core.categories import normalize_category, suggest_category, validate_c
 from datetime import datetime
 
 class MessageProcessor:
+    """Natural language message processor for financial transactions.
+    
+    Parses user messages and extracts transaction data including amount,
+    category, type (income/expense), and dates using regex patterns
+    and fuzzy matching.
+    """
+    
+    # Constants for regex patterns and thresholds
+    DEFAULT_CATEGORY = "uncategorized"  # Fallback when no category is detected
+    FUZZY_MATCH_THRESHOLD = 70  # Minimum similarity score for category suggestions
+    
     def __init__(self):
-        # Regex patterns
+        # Regex patterns for natural language processing
         # Amount: Matches integers, decimals (10.50), and suffix k/m (2.5k)
         self.amount_pattern = r"(?P<amount>\d+(\.\d+)?)\s*(?P<multiplier>[km])?"
         
-        # Expense: "spent 100 on food", "bought items for 200", "paid 500 rent"
+        # Expense patterns: "spent 100 on food", "bought items for 200", "paid 500 rent"
         self.expense_pattern = re.compile(
             rf"(spent|paid|bought)\s+{self.amount_pattern}\s+(on|for)?\s*(?P<rest>.*)", 
             re.IGNORECASE
         )
         
-        # Income: "income 5000 salary", "received 500 bonus", "salary 2000"
+        # Income patterns: "income 5000 salary", "received 500 bonus", "salary 2000"
         self.income_pattern = re.compile(
             rf"(income|salary|received)\s+{self.amount_pattern}\s*(?P<rest>.*)", 
             re.IGNORECASE
@@ -31,18 +42,46 @@ class MessageProcessor:
         self.delete_pattern = re.compile(r"delete\s*(last|transaction)?\s*(\d*)", re.IGNORECASE)
 
     def _parse_amount(self, amount_str: str, multiplier: str) -> float:
-        """Helper to parse amount with multipliers (k, m)."""
+        """
+        Parse monetary amount with optional multiplier suffixes.
+        
+        Args:
+            amount_str: Base numeric amount (e.g., "1.5")
+            multiplier: Optional suffix 'k' (thousand) or 'm' (million)
+            
+        Returns:
+            Parsed float value with multiplier applied
+            
+        Examples:
+            _parse_amount("100", "k") -> 100000.0
+            _parse_amount("2.5", "m") -> 2500000.0
+        """
         value = float(amount_str)
         if multiplier:
             if multiplier.lower() == 'k':
-                value *= 1000
+                value *= 1000  # Thousand multiplier
             elif multiplier.lower() == 'm':
-                value *= 1000000
+                value *= 1000000  # Million multiplier
         return value
 
     def parse_message(self, message: str) -> Tuple[str, Dict[str, Any]]:
         """
-        Parses the message and returns an intent and extracted data.
+        Parse user message and extract intent and structured data.
+        
+        Args:
+            message: User's natural language message
+            
+        Returns:
+            Tuple of (intent, data) where intent is one of:
+            - "log_transaction": Extracted income/expense data
+            - "get_report": Request for financial report
+            - "get_history": Request for transaction history
+            - "help": Request for help information
+            - "unknown": Message couldn't be parsed
+            
+        Examples:
+            "Spent 100 on food" -> ("log_transaction", {"amount": 100, "category": "food"})
+            "Show report" -> ("get_report", {"period": "all"})
         """
         message = message.strip()
         
@@ -79,20 +118,16 @@ class MessageProcessor:
                 # Extract date from the "rest" part
                 date_obj = parse_date(rest)
                 if date_obj:
-                    # Remove the date string from description to find category
-                    # This is a simplification; for better results, we'd remove the specific substring matched by dateparser
-                    # But dateparser doesn't easily return the matched span. 
-                    # Assuming date is often at the end.
-                    pass 
+                    # Date found - will be passed to transaction
+                    # Note: dateparser doesn't easily return matched substring,
+                    # so we assume date is often at the end of message
+                    pass
                 
-                # If date found, we use it. If not, default to current time (handled in DB/schema usually, 
-                # but here we pass it if found)
+                # Category extraction: heuristic + validation
+                # Strategy: First word after amount/preposition is category candidate
+                # Fallback to DEFAULT_CATEGORY if no valid category found
                 
-                # Category extraction: simple heuristic + validation
-                # Split remainder by words, check if any is a valid category
-                # Fallback: Treat the whole 'rest' as category if short, or 'uncategorized'
-                
-                category = "uncategorized"
+                category = self.DEFAULT_CATEGORY
                 description = None
                 
                 # Heuristic: First word after amount/preposition is candidate for category
@@ -125,7 +160,7 @@ class MessageProcessor:
                     "description": description
                 }
             except ValueError:
-                pass # Float conversion error
+                pass  # Float conversion error - continue to next pattern
             
         # Check for income
         income_match = self.income_pattern.search(message)
@@ -152,7 +187,7 @@ class MessageProcessor:
                     "date": date_obj
                 }
             except ValueError:
-                pass
+                pass  # Float conversion error - continue to next pattern
 
         return "unknown", {}
 
