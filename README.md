@@ -14,6 +14,9 @@ A sophisticated WhatsApp-powered personal finance tracking system that enables u
 - **💰 Transaction Management**: Full CRUD with amount parsing (decimals, k/m multipliers)
 - **📅 Date Processing**: Natural language date parsing (yesterday, last week, etc.)
 - **🔍 Search & History**: Transaction history and deletion capabilities
+- **📊 Comprehensive Monitoring**: Structured logging, metrics collection, and health checks
+- **🛡️ Enhanced Error Handling**: Global error middleware with detailed tracking
+- **🔧 Production Ready**: Enterprise-grade logging, monitoring, and configuration
 
 ### 🎯 Supported Commands
 ```bash
@@ -39,12 +42,15 @@ A sophisticated WhatsApp-powered personal finance tracking system that enables u
 ## 🛠 Technology Stack
 
 - **Backend Framework**: FastAPI with async support
-- **Database**: PostgreSQL 18 with SQLAlchemy 2.0 ORM
+- **Database**: PostgreSQL with SQLAlchemy 2.0 ORM
 - **Messaging**: Twilio WhatsApp API
 - **Data Validation**: Pydantic schemas
 - **Natural Language**: dateparser + fuzzywuzzy for intelligent parsing
+- **Monitoring**: Structured JSON logging with rotation
+- **Metrics**: Real-time performance tracking
+- **Health Checks**: System resource monitoring
 - **Deployment**: Docker with docker-compose support
-- **Security**: Twilio signature validation framework
+- **Security**: Twilio signature validation and error tracking
 
 ## Project Structure
 
@@ -198,7 +204,16 @@ Send natural language messages to your WhatsApp bot:
 
 ### Development & Testing  
 - `POST /api/v1/verify/message` - Direct message testing (bypasses Twilio)
-- `GET /` - Health check endpoint
+- `GET /` - Application information and status
+
+### Monitoring & Health
+- `GET /monitoring/health` - System health check with monitoring
+- `GET /monitoring/metrics` - Application metrics and performance data
+- `POST /monitoring/metrics/reset` - Reset application metrics
+
+### Documentation
+- `GET /docs` - Interactive API documentation (Swagger)
+- `GET /redoc` - API documentation (ReDoc)
 
 ## 🧪 Testing
 
@@ -207,6 +222,12 @@ Send natural language messages to your WhatsApp bot:
 curl -X POST http://localhost:8000/api/v1/verify/message \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "message=Spent 2500 on food&phone=+1234567890"
+
+# Test health check
+curl http://localhost:8000/monitoring/health
+
+# Test metrics collection
+curl http://localhost:8000/monitoring/metrics
 ```
 
 ## 📊 Database Schema
@@ -225,7 +246,43 @@ The application follows clean architecture principles:
 - **Repository Pattern**: Database access abstracted through models  
 - **Dependency Injection**: FastAPI's DI for database sessions
 - **Schema Validation**: Pydantic ensures data integrity
-- **Error Handling**: Graceful failure with user-friendly messages
+- **Error Handling**: Comprehensive middleware with detailed logging
+- **Monitoring**: Request tracking, metrics collection, and health monitoring
+- **Configuration**: Environment-aware settings with extensive customization
+
+## 📊 Monitoring & Logging
+
+### Logging Features
+- **Structured JSON logs** with timestamps and context
+- **Log rotation** (10MB files, 5 backups)  
+- **Request ID tracking** for end-to-end tracing
+- **Database query logging** with performance timing
+- **Error tracking** with stack traces and context
+
+### Health Monitoring
+- **System metrics**: CPU, memory, disk usage
+- **Database health**: Connection status and performance
+- **Application metrics**: Request rates, response times, error rates
+- **Real-time alerts**: Configurable thresholds and notifications
+
+### Configuration
+```env
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+LOG_REQUEST_BODY=false
+ENABLE_STRUCTURED_LOGGING=true
+
+# Monitoring Configuration  
+ENABLE_METRICS=true
+ENABLE_HEALTH_CHECKS=true
+METRICS_RETENTION_HOURS=24
+
+# Performance Tuning
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+REQUEST_TIMEOUT_SECONDS=60
+```
 
 ## 🚀 Production Readiness
 
@@ -234,21 +291,22 @@ The application follows clean architecture principles:
 - WhatsApp integration with Twilio
 - Database persistence and relationships
 - Container deployment (Docker)
+- Comprehensive monitoring and logging
+- Enhanced error handling and security
+- Structured metrics collection
+- Health check endpoints
 
-### ⚠️ Needs Attention
-- Security validation (Twilio signatures) 
-- Comprehensive error handling
-- Automated testing suite
-- Monitoring and logging
+## 📈 Planned Features
 
-## 📈 Upcoming Features
-
-See [FEATURES.md](FEATURES.md) for detailed roadmap including:
-- Budget tracking & alerts
-- Recurring transactions
-- Data export (CSV/PDF)
-- Advanced analytics & insights
-- Multi-currency support
+- **Budget tracking & alerts**: Set spending limits and receive notifications
+- **Recurring transactions**: Automated monthly/weekly expense tracking
+- **Data export**: CSV/PDF reports for external analysis
+- **Advanced analytics**: Spending trends, category insights, and forecasting
+- **Multi-currency support**: Handle transactions in different currencies
+- **Web dashboard**: Visual interface for managing finances
+- **Bank integration**: Direct transaction import from banking APIs
+- **Goal tracking**: Savings goals and progress monitoring
+- **Team/family accounts**: Shared expense tracking for groups
 
 ## 📝 License
 
